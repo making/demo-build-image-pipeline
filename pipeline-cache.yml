@@ -1,0 +1,84 @@
+resources:
+- name: repo
+  type: git
+  source:
+    uri: https://github.com/making/demo-configdata.git
+- name: docker
+  type: docker-image
+  source:
+    repository: ((docker_repository))
+    username: ((docker_username))
+    password: ((docker_password))  
+- name: builder
+  type: docker-image
+  source:
+    repository: paketobuildpacks/builder
+    tag: base
+- name: stack
+  type: docker-image
+  source:
+    repository: paketobuildpacks/run
+    tag: base-cnb
+jobs:
+- name: build-image
+  plan:
+  - get: repo
+    trigger: true
+  - get: docker
+    params:
+      save: true
+  - get: builder  
+    trigger: true
+    params:
+      save: true
+  - get: stack  
+    trigger: true
+    params:
+      save: true
+  - task: mvn-test
+    privileged: true
+    config:
+      platform: linux
+      image_resource:
+        type: docker-image
+        source:
+          repository: springci/spring-boot-jdk11-ci-image
+          tag: master
+      inputs:
+      - name: repo
+      - name: docker
+      - name: builder
+      - name: stack
+      outputs:
+      - name: image      
+      caches: 
+      - path: repo/m2  
+      run:
+        path: bash
+        args:
+        - -ce
+        - |
+          cd repo
+          # cache
+          rm -rf ~/.m2
+          ln -fs $(pwd)/m2 ~/.m2
+
+          # start docker
+          source /docker-lib.sh
+          start_docker
+          
+          # load caches
+          docker load -q -i ../docker/image
+          docker tag $(cat ../docker/image-id) $(cat ../docker/repository):$(cat ../docker/tag)
+          docker load -q -i ../builder/image
+          docker tag $(cat ../builder/image-id) $(cat ../builder/repository):$(cat ../builder/tag)
+          docker load -q -i ../stack/image
+          docker tag $(cat ../stack/image-id) $(cat ../stack/repository):$(cat ../stack/tag)
+
+          # build
+          ./mvnw -V spring-boot:build-image -Dmaven.test.skip=true -Dspring-boot.build-image.imageName=((docker_repository))
+          docker save ((docker_repository)) > ../image/image
+          docker images --no-trunc --digests ((docker_repository)) --format "{{.ID}}" > ../image/image-id
+  - put: docker
+    params:
+      load: image          
