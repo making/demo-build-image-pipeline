@@ -3,50 +3,29 @@ resources:
   type: git
   source:
     uri: https://github.com/making/demo-configdata.git
-- name: docker
+- name: lifecycle
+  type: git
+  source:
+    uri: https://github.com/making/cnb-lifecycle-task.git
+    branch: main
+- name: builder
   type: docker-image
   source:
-    repository: ((docker_repository))
-    username: ((docker_username))
-    password: ((docker_password))
+    repository: paketobuildpacks/builder
+    tag: base
 jobs:
 - name: build-image
   plan:
-  - get: repo
-    trigger: true
-  - task: mvn-test
-    privileged: true
-    config:
-      platform: linux
-      image_resource:
-        type: docker-image
-        source:
-          repository: springci/spring-boot-jdk11-ci-image
-          tag: master
-      inputs:
-      - name: repo
-      outputs:
-      - name: image      
-      caches: 
-      - path: repo/m2  
-      run:
-        path: bash
-        args:
-        - -ce
-        - |
-          cd repo
-          # cache
-          rm -rf ~/.m2
-          ln -fs $(pwd)/m2 ~/.m2
-
-          # start docker
-          source /docker-lib.sh
-          start_docker
-
-          # build
-          ./mvnw -V spring-boot:build-image -Dmaven.test.skip=true -Dspring-boot.build-image.imageName=((docker_repository))
-          docker save ((docker_repository)) > ../image/image
-          docker images --no-trunc --digests ((docker_repository)) --format "{{.ID}}" > ../image/image-id
-  - put: docker
+  - in_parallel:
+    - get: workspace
+      resource: repo
+      trigger: true
+    - get: builder
+    - get: lifecycle
+  - task: create
+    image: builder
     params:
-      load: image          
+      DOCKER_IMAGE: ((docker_repository))
+      DOCKER_USERNAME: ((docker_username))
+      DOCKER_PASSWORD: ((docker_password))
+    file: lifecycle/creator.yml
